@@ -9,23 +9,41 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-    - name: Checkout the code
-      uses: actions/checkout@v2
-    - name: Install WordPress
-      run: |
-        sudo apt update
-        sudo apt install wordpress
-    - name: Deploy to EC2
-      uses: easingthemes/ssh-deploy@v2.1.5
-      env:
-        SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_KEY }}
-        SOURCE: "./"
-        REMOTE_HOST: ${{ secrets.EC2_HOST }}
-        REMOTE_USER: ${{ secrets.EC2_USER }}
-        TARGET: "/var/www/html"
-    - name: Configure WordPress
-      run: |
-        sed -i "s/database_name='wordpress'/database_name='my_database'/g" wp-config.php
-        sed -i "s/database_user='root'/database_user='my_user'/g" wp-config.php
-        sed -i "s/database_password=''/database_password='redhat'/g" wp-config.php
+      - name: Checkout code
+        uses: actions/checkout@v2
 
+      - name: Configure SSH
+        uses: webfactory/ssh-agent@v0.5.3
+        with:
+          ssh-private-key: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+
+      - name: Deploy to EC2
+        run: |
+          ssh -o StrictHostKeyChecking=no ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }} 'bash -s' << 'EOF'
+            # Update system packages
+            sudo apt-get update
+            sudo apt-get upgrade -y
+
+            # Install necessary software
+            sudo apt-get install -y apache2 php libapache2-mod-php mysql-server php-mysql
+
+            # Download and extract WordPress
+            sudo wget -P /var/www/html https://wordpress.org/latest.tar.gz
+            sudo tar -xzf /var/www/html/latest.tar.gz -C /var/www/html
+            sudo rm /var/www/html/latest.tar.gz
+
+            # Configure permissions
+            sudo chown -R www-data:www-data /var/www/html/
+            sudo chmod -R 755 /var/www/html/
+
+            # Configure Apache to serve WordPress
+            sudo mv /etc/apache2/sites-available/000-default.conf /etc/apache2/sites-available/backup.conf
+            sudo cp /etc/apache2/sites-available/000-default.conf /etc/apache2/sites-available/wordpress.conf
+            sudo sed -i 's/\/var\/www\/html/\/var\/www\/html\/wordpress/g' /etc/apache2/sites-available/wordpress.conf
+            sudo a2ensite wordpress.conf
+            sudo a2enmod rewrite
+            sudo systemctl restart apache2
+
+            # Restart Apache
+            sudo systemctl restart apache2
+          EOF
